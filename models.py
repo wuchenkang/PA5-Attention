@@ -172,7 +172,8 @@ class LstmDecoder(nn.Module):
         self.dropout = nn.Dropout(0.2)
         
         self.attention = Attention(decoder_dim, attention_type='dot')
-        #self.decoder_cell = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)
+        
+        self.decoder_cell = nn.LSTM(decoder_dim, decoder_dim, decoder_depth, batch_first=True)
         
 
     def init_hidden_states(self, batch_size, device):
@@ -207,9 +208,14 @@ class LstmDecoder(nn.Module):
         for i in range( lengths[0] ):
             temp, _ = self.attention(output[:,i,:].unsqueeze(1), output[:,:(i+1),:])
             temp = temp.squeeze(1)
-            attn[:,i,:] = temp
+            attn[:,i,:] = temp   
         
-        predictions = self.fc2(attn)
+        h0, c0 = self.init_hidden_states(y.shape[0], y.device)
+        attn = pack_padded_sequence(attn, [lengths[0] for i in range(len(lengths)) ], batch_first = True)
+        output, _ = self.decoder_cell(attn, (h0.detach(), c0.detach()))
+        output, _ = pad_packed_sequence(output, batch_first=True)  
+        
+        predictions = self.fc2(output)
         
         return predictions
 
@@ -223,6 +229,10 @@ class LstmDecoder(nn.Module):
         h = h.detach()
         c = c.detach()
         
+        h_decoder, c_decoder = self.init_hidden_states(x.shape[0], x.device)
+        h_decoder = h_decoder.detach()
+        c_decoder = c_decoder.detach()
+        
         hidden_all = torch.zeros( (x.size(0), max_length, self.decoder_dim) ).to(x.device)
         
         for t in range(max_length):
@@ -235,7 +245,9 @@ class LstmDecoder(nn.Module):
             #output = [B, 1, dim]
             hidden_all[:,t,:] = output.squeeze(1)
             output, _ = self.attention(output, hidden_all[:,:(t+1),:])
-                
+            
+            output, (h_decoder, c_decoder) = self.decoder_cell( output , (h_decoder, c_decoder) )
+            
             output = self.fc2(output)
             #print(output.size())
             if stochastic:

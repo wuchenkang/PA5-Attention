@@ -1,5 +1,5 @@
 {
-  "experiment_name": "attention",
+  "experiment_name": "attention_lstmcell",
   "dataset": {
     "training_ids_file_path": "./train_ids.csv",
     "validation_ids_file_path": "./val_ids.csv",
@@ -15,7 +15,7 @@
   "experiment": {
     "num_epochs": 20,
     "learning_rate": 5e-5,
-    "random_seed": 123,
+    "random_seed": 42,
     "early_stop": false,
     "patience": 5
   },
@@ -24,7 +24,7 @@
     "embedding_size": 300,
     "encoder_type": "Resnet",
     "decoder_attention": false,
-    "decoder_depth": 2,
+    "decoder_depth": 1,
     "encoder_dim": 2048
   },
   "generation": {

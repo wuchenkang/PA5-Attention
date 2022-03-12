@@ -103,7 +103,7 @@ class Experiment(object):
         start_epoch = self.__current_epoch
         counts = 0
 
-        #self.__val()
+        self.__val()
         for epoch in tqdm(range(start_epoch, self.__epochs)):  # loop over the dataset multiple times
             start_time = datetime.now()
             self.__current_epoch = epoch
