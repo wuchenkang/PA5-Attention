@@ -15,14 +15,12 @@ class ResnetEncoder(nn.Module):
         model = resnet50(pretrained = True)
         for param in model.parameters():
             param.requires_grad = False
-        self.feature_map = nn.Sequential( *list(model.children())[:-1] )
-
-        # self.embedding = nn.Linear(model.fc.in_features, embedding_dim)
+        self.feature_map = nn.Sequential(*list(model.children())[:-2])
+        self.adaptive_pool = nn.AdaptiveMaxPool2d((embedding_dim // 16, embedding_dim // 16))
 
     def forward(self, x):
         x = self.feature_map(x)
-        x = x.reshape(x.size(0), -1)
-        # x = self.embedding(x)
+        x = self.adaptive_pool(x)
         return x
 
 
@@ -149,104 +147,76 @@ class Attention(nn.Module):
 
 
 class LstmDecoder(nn.Module):
-    def __init__(self, encoder_dim, embedding_dim, vocab_size, decoder_dim, decoder_depth, attention=True, lstm_flag = True):
+    def __init__(self, encoder_dim, embedding_dim, vocab_size, decoder_dim):
         super().__init__()
         self.encoder_dim = encoder_dim
         self.embedding_dim = embedding_dim
         self.decoder_dim = decoder_dim
-        self.decoder_depth = decoder_depth
-        
+        self.vocab_size = vocab_size
+
         self.fc1 = nn.Linear(encoder_dim, embedding_dim)
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        
-        self.lstm_flag = lstm_flag
-        if lstm_flag:
-            self.lstm = nn.LSTM(embedding_dim, decoder_dim, decoder_depth, batch_first=True)
-        else:
-            self.rnn = nn.RNN(embedding_dim, decoder_dim, decoder_depth, nonlinearity='relu', batch_first=True)
+
+        self.pool = nn.AdaptiveMaxPool2d((1, 1))
+        self.attn_fc = nn.Linear(encoder_dim, decoder_dim)
+        self.attention = Attention(dimensions=decoder_dim, attention_type='dot')
+        self.lstm1 = nn.LSTMCell(embedding_dim + decoder_dim, decoder_dim)
+        self.lstm2 = nn.LSTMCell(decoder_dim, decoder_dim)
             
         self.fc2 = nn.Linear(decoder_dim, vocab_size)
         self.softmax = nn.Softmax(dim=2)
         self.bn = nn.BatchNorm1d(embedding_dim, momentum=0.01)
         
         self.dropout = nn.Dropout(0.2)
-        
-        self.attention = Attention(decoder_dim, attention_type='dot')
-        #self.decoder_cell = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)
-        
 
     def init_hidden_states(self, batch_size, device):
-        hidden_state = torch.zeros((self.decoder_depth, batch_size, self.decoder_dim)).to(device)
-        cell_state = torch.zeros((self.decoder_depth, batch_size, self.decoder_dim)).to(device)
+        hidden_state = torch.zeros((2, batch_size, self.decoder_dim)).to(device)
+        cell_state = torch.zeros((2, batch_size, self.decoder_dim)).to(device)
         return hidden_state, cell_state
 
     def forward(self, x, y, lengths):
-        x = self.bn( self.fc1(x) )
-        
-        #x = self.dropout(x)
-        
-        feature = x.view((x.shape[0], 1, x.shape[1]))
-        
-        y = self.embedding(y)
-        
-        x = torch.cat((feature, y), dim=1)
-        x = pack_padded_sequence(x, lengths, batch_first = True)
-        h0, c0 = self.init_hidden_states(y.shape[0], y.device)
-        
-        if self.lstm_flag:
-            output, _ = self.lstm(x, (h0.detach(), c0.detach() ))
-        else:
-            output, _ = self.rnn(x, h0.detach())
-            
-        output, _ = pad_packed_sequence(output, batch_first=True)
-        
-        #output is [batch, L, decoder_dim=512]
+        x_ = x.clone().flatten(start_dim=2).permute(0, 2, 1)
+        x = self.pool(x).squeeze()
+        x = self.bn(self.fc1(x))    # [batch_size, encoder_dim]
+        y = self.embedding(y)       # [batch_size, seqence_len, embedding_dim]
 
-        attn = torch.zeros_like(output)
+        inputs = torch.cat((x.view((x.shape[0], 1, x.shape[1])), y), dim=1)
+        h, c = self.init_hidden_states(y.shape[0], y.device)
 
-        for i in range( lengths[0] ):
-            temp, _ = self.attention(output[:,i,:].unsqueeze(1), output[:,:(i+1),:])
-            temp = temp.squeeze(1)
-            attn[:,i,:] = temp
-        
-        predictions = self.fc2(attn)
-        
-        return predictions
+        outputs = torch.zeros((x.size(0), lengths[0], self.vocab_size)).to(x.device)
+        for t in range(lengths[0]):
+            attn, _ = self.attention(h[0].unsqueeze(1), self.attn_fc(x_))
+            attn = attn.squeeze(1)
+            h[0], c[0] = self.lstm1(torch.cat((inputs[:, t], attn), dim=1), (h[0], c[0]))
+            h[1], c[1] = self.lstm2(h[0], (h[1], c[1]))
+            outputs[:, t] = self.fc2(h[1])
+        return outputs
 
-    def generate(self, x, max_length=100, stochastic = False, temp=0.1):
-        # batch * image
-        x = self.bn( self.fc1(x) )
-        x = x.view((x.shape[0], 1, x.shape[1]))
+    def generate(self, x, max_length=100, stochastic=False, temp=0.1):
+        x_ = x.clone().flatten(start_dim=2).permute(0, 2, 1)
+        x = self.pool(x).squeeze()
+        x = self.bn(self.fc1(x))  # [batch_size, encoder_dim]
 
-        pred = torch.zeros((x.size(0), max_length), dtype=torch.long).cuda()
         h, c = self.init_hidden_states(x.shape[0], x.device)
-        h = h.detach()
-        c = c.detach()
-        
-        hidden_all = torch.zeros( (x.size(0), max_length, self.decoder_dim) ).to(x.device)
-        
-        for t in range(max_length):
-            # print(t)
-            if self.lstm_flag:
-                output, (h, c) = self.lstm(x, (h, c))
-            else:
-                output, h = self.rnn(x, h)
-            
-            #output = [B, 1, dim]
-            hidden_all[:,t,:] = output.squeeze(1)
-            output, _ = self.attention(output, hidden_all[:,:(t+1),:])
-                
-            output = self.fc2(output)
-            #print(output.size())
-            if stochastic:
-                output = self.softmax(output/temp).reshape(output.size(0),-1)
-                # batch_size * vocab_size
-                pred[:,t] = torch.multinomial(output.data, 1).view(-1)
-            else:
-                #deterministic
-                pred[:,t] = torch.argmax(output, dim=2).view(-1)
+        predictions = torch.zeros((x.size(0), max_length), dtype=torch.long, device=x.device)
 
-            x = self.embedding(pred[:, t])
-            x = x.view((x.shape[0], 1, x.shape[1]))
-        
-        return pred
+        inputs = torch.zeros((x.size(0), self.embedding_dim), device=x.device)
+        for t in range(max_length):
+            attn, _ = self.attention(h[0].unsqueeze(1), self.attn_fc(x_))
+            attn = attn.squeeze(1)
+
+            h[0], c[0] = self.lstm1(torch.cat((inputs, attn), dim=1), (h[0], c[0]))
+            h[1], c[1] = self.lstm2(h[0], (h[1], c[1]))
+            outputs = self.fc2(h[1])
+
+            if stochastic:
+                output = self.softmax(outputs / temp).reshape(output.size(0), -1)
+                # batch_size * vocab_size
+                predictions[:, t] = torch.multinomial(output.data, 1).view(-1)
+            else:
+                # deterministic
+                predictions[:, t] = torch.argmax(outputs, dim=1)
+
+            inputs = self.embedding(predictions[:, t])
+
+        return predictions
