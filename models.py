@@ -170,7 +170,7 @@ class LstmDecoder(nn.Module):
         
         self.dropout = nn.Dropout(0.2)
         
-        self.attention = Attention(decoder_dim, attention_type='general')
+        self.attention = Attention(decoder_dim, attention_type='dot')
         #self.decoder_cell = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)
         
 
