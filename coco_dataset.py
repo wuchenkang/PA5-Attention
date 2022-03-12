@@ -17,7 +17,7 @@ from pycocotools.coco import COCO
 class CocoDataset(data.Dataset):
     """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
 
-    def __init__(self, root, json, ids, vocab, img_size, transform=None):
+    def __init__(self, root, json, ids, vocab, img_size, augment = False):
         """Set the path for images, captions and vocabulary wrapper.
 
         Args:
@@ -34,9 +34,18 @@ class CocoDataset(data.Dataset):
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
+        
+        self.augment = augment
+        print(augment)
 
         self.resize = transforms.Compose(
             [transforms.Resize(img_size, interpolation=2), transforms.CenterCrop(img_size)])
+        
+        self.transform  = transforms.Compose( [transforms.RandomAffine(10, translate=(0.1, 0.1), scale=None, shear=None,
+                                                        resample=Image.BICUBIC, fillcolor=0),
+                                            
+                                             transforms.RandomHorizontalFlip(p=0.5)]
+                                            )
 
     def __getitem__(self, index):
         """Returns one data pair (image and caption)."""
@@ -48,8 +57,10 @@ class CocoDataset(data.Dataset):
         path = coco.loadImgs(img_id)[0]['file_name'];
         image = Image.open(os.path.join(self.root, path)).convert('RGB')
         image = self.resize(image)
-        image = self.normalize(np.asarray(image))
 
+        if self.augment:
+            image = self.transform(image)
+        image = self.normalize(np.asarray(image))
         # Convert caption (string) to word ids.
         tokens = nltk.tokenize.word_tokenize(str(caption).lower())
         caption = [vocab('<start>')]
@@ -94,4 +105,4 @@ def collate_fn(data):
     for i, cap in enumerate(captions):
         end = lengths[i]
         targets[i, :end] = cap[:end]
-    return images, targets, img_ids
+    return images, targets, img_ids, lengths

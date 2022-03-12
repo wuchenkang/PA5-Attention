@@ -1,5 +1,6 @@
 from turtle import forward
 from black import out
+import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -17,7 +18,6 @@ class ResnetEncoder(nn.Module):
         self.feature_map = nn.Sequential( *list(model.children())[:-1] )
 
         # self.embedding = nn.Linear(model.fc.in_features, embedding_dim)
-        
 
     def forward(self, x):
         x = self.feature_map(x)
@@ -31,11 +31,29 @@ class VitEncoder(nn.Module):
         super().__init__()
         self.feature_extractor = ViTFeatureExtractor.from_pretrained('google/vit-base-patch16-224')
         self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
+        self.mapping = nn.Sequential(
+            nn.Conv2d(1, 3, (3, 3), stride=(2, 2)),
+            nn.ReLU(),
+            nn.BatchNorm2d(3),
+            nn.MaxPool2d(4, 4),
+        )
 
     def forward(self, x):
-        inputs = self.feature_extractor(x, return_tensors="pt")
+        x = x.cpu()
+        batch_input = []
+        for image in x:
+            inputs = self.feature_extractor(image, return_tensors="pt")
+            values = inputs["pixel_values"]
+            if torch.cuda.is_available():
+                values = values.cuda()
+            batch_input.append(values)
+        inputs = {"pixel_values": torch.stack(batch_input, dim=1).squeeze(0)}
+
         with torch.no_grad():
             outputs = self.model(**inputs).last_hidden_state
+        outputs = self.mapping(outputs.unsqueeze(1))
+        outputs = outputs.reshape(outputs.size(0), -1)
+
         return outputs
 
 
@@ -66,6 +84,7 @@ class LstmDecoder(nn.Module):
         self.fc1 = nn.Linear(encoder_dim, embedding_dim)
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.lstm = nn.LSTM(embedding_dim, decoder_dim, decoder_depth, batch_first=True)
+        self.use_attention = attention
         self.attention = Attention()
         self.fc2 = nn.Linear(decoder_dim, vocab_size)
         self.softmax = nn.Softmax(dim=2)
@@ -87,7 +106,7 @@ class LstmDecoder(nn.Module):
         output, _ = self.lstm(x, (h0.detach(), c0.detach()))
         output, _ = pad_packed_sequence(output, batch_first=True)
         attn = torch.zeros_like(output)
-        if self.attention:
+        if self.use_attention:
             length = lengths[0]
             for t in range(length):
                 masked_output = output.copy()
@@ -99,7 +118,7 @@ class LstmDecoder(nn.Module):
 
     def generate(self, x, max_length=100, stochastic = False, temp=0.1):
         # batch * image
-        x = self.bn( self.fc1(x) )
+        x = self.bn(self.fc1(x))
         x = x.view((x.shape[0], 1, x.shape[1]))
 
         pred = torch.zeros((x.size(0), max_length), dtype=torch.long).cuda()
@@ -114,10 +133,10 @@ class LstmDecoder(nn.Module):
             if stochastic:
                 output = self.softmax(output/temp).reshape(output.size(0),-1)
                 # batch_size * vocab_size
-                pred[:,t] = torch.multinomial(output.data, 1).view(-1)
+                pred[:, t] = torch.multinomial(output.data, 1).view(-1)
             else:
                 #deterministic
-                pred[:,t] = torch.argmax(output, dim=2).view(-1)
+                pred[:, t] = torch.argmax(output, dim=2).view(-1)
 
             x = self.embedding(pred[:, t])
             x = x.view((x.shape[0], 1, x.shape[1]))
