@@ -26,6 +26,6 @@ def get_model(config_data, vocab):
     else:
         raise ValueError(f"{encoder_type} encoder not supported, please choose from ['Resnet', 'ViT']")
 
-    decoder = LstmDecoder(encoder_dim, embedding_size, vocab_size, hidden_size, decoder_depth, attention=use_attention)
+    decoder = LstmDecoder(encoder_dim, embedding_size, vocab_size, hidden_size)
 
     return encoder, decoder

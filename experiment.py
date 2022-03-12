@@ -133,6 +133,7 @@ class Experiment(object):
         self.__decoder.train()
         training_loss = 0
         # index, image, target, image_id
+        
         for i, (images, captions, img_ids, length) in enumerate(tqdm(self.__train_loader)):
             captions = captions.cuda()
             encoder_output = self.__encoder(images.cuda())

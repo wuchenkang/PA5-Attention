@@ -1,5 +1,5 @@
 {
-  "experiment_name": "attention",
+  "experiment_name": "attention_in_input",
   "dataset": {
     "training_ids_file_path": "./train_ids.csv",
     "validation_ids_file_path": "./val_ids.csv",
