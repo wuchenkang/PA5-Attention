@@ -1,5 +1,5 @@
-from turtle import forward
-from black import out
+#from turtle import forward
+#from black import out
 import numpy as np
 import torch
 from torch import nn
@@ -149,7 +149,7 @@ class Attention(nn.Module):
 
 
 class LstmDecoder(nn.Module):
-    def __init__(self, encoder_dim, embedding_dim, vocab_size, decoder_dim, decoder_depth, attention=True):
+    def __init__(self, encoder_dim, embedding_dim, vocab_size, decoder_dim, decoder_depth, attention=True, lstm_flag = True):
         super().__init__()
         self.encoder_dim = encoder_dim
         self.embedding_dim = embedding_dim
@@ -201,18 +201,13 @@ class LstmDecoder(nn.Module):
         output, _ = pad_packed_sequence(output, batch_first=True)
         
         #output is [batch, L, decoder_dim=512]
-        
-#         print(lengths)
-#         print(output.size())
+
         attn = torch.zeros_like(output)
-#         print(attn.size())
-        
-        for i in range(len(lengths)):
+
+        for i in range( lengths[0] ):
             temp, _ = self.attention(output[:,i,:].unsqueeze(1), output[:,:(i+1),:])
             temp = temp.squeeze(1)
             attn[:,i,:] = temp
-        
-#         print(attn.size())
         
         predictions = self.fc2(attn)
         

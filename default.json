@@ -1,5 +1,5 @@
 {
-  "experiment_name": "ViT-LSTM2",
+  "experiment_name": "attention",
   "dataset": {
     "training_ids_file_path": "./train_ids.csv",
     "validation_ids_file_path": "./val_ids.csv",
@@ -9,8 +9,8 @@
     "images_root_dir": "./data/images/",
     "vocabulary_threshold": 2,
     "img_size": 256,
-    "batch_size": 16,
-    "num_workers": 1
+    "batch_size": 10,
+    "num_workers": 4
   },
   "experiment": {
     "num_epochs": 20,
