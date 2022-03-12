@@ -9,13 +9,13 @@
     "images_root_dir": "./data/images/",
     "vocabulary_threshold": 2,
     "img_size": 256,
-    "batch_size": 16,
-    "num_workers": 1
+    "batch_size": 12,
+    "num_workers": 4
   },
   "experiment": {
     "num_epochs": 20,
     "learning_rate": 5e-5,
-    "random_seed": 123,
+    "random_seed": 42,
     "early_stop": false,
     "patience": 5
   },
@@ -23,7 +23,7 @@
     "hidden_size": 512,
     "embedding_size": 300,
     "encoder_type": "Resnet",
-    "decoder_attention": false,
+    "decoder_attention": true,
     "decoder_depth": 2,
     "encoder_dim": 2048
   },

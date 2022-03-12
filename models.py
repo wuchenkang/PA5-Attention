@@ -1,5 +1,3 @@
-from turtle import forward
-from black import out
 import numpy as np
 import torch
 from torch import nn
@@ -142,14 +140,15 @@ class Attention(nn.Module):
 
         # Apply linear_out on every 2nd dimension of concat
         # output -> (batch_size, output_len, dimensions)
-        output = self.linear_out(combined).view(batch_size, output_len, dimensions)
-        output = self.tanh(output)
+#         output = self.linear_out(combined).view(batch_size, output_len, dimensions)
+#         output = self.tanh(output)
 
-        return output, attention_weights
+#         return output, attention_weights
+        return combined.view(batch_size, output_len, 2 * dimensions)
 
 
 class LstmDecoder(nn.Module):
-    def __init__(self, encoder_dim, embedding_dim, vocab_size, decoder_dim, decoder_depth, attention=True):
+    def __init__(self, encoder_dim, embedding_dim, vocab_size, decoder_dim, decoder_depth, lstm_flag=True, attention=True):
         super().__init__()
         self.encoder_dim = encoder_dim
         self.embedding_dim = embedding_dim
@@ -165,13 +164,13 @@ class LstmDecoder(nn.Module):
         else:
             self.rnn = nn.RNN(embedding_dim, decoder_dim, decoder_depth, nonlinearity='relu', batch_first=True)
             
-        self.fc2 = nn.Linear(decoder_dim, vocab_size)
+        self.fc2 = nn.Linear(decoder_dim*2, vocab_size)
         self.softmax = nn.Softmax(dim=2)
         self.bn = nn.BatchNorm1d(embedding_dim, momentum=0.01)
         
         self.dropout = nn.Dropout(0.2)
         
-        self.attention = Attention(decoder_dim, attention_type='dot')
+        self.attention = Attention(decoder_dim, attention_type='general')
         #self.decoder_cell = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)
         
 
@@ -204,11 +203,13 @@ class LstmDecoder(nn.Module):
         
 #         print(lengths)
 #         print(output.size())
-        attn = torch.zeros_like(output)
+#           attn = torch.zeros(output.shape)
+        attn = torch.zeros((output.shape[0], output.shape[1], output.shape[2]*2)).to(output.device)
 #         print(attn.size())
         
-        for i in range(len(lengths)):
-            temp, _ = self.attention(output[:,i,:].unsqueeze(1), output[:,:(i+1),:])
+        for i in range(lengths[0]):
+#             temp, _ = self.attention(output[:,i,:].unsqueeze(1), output[:,:(i+1),:])
+            temp = self.attention(output[:,i,:].unsqueeze(1), output[:,:(i+1),:])
             temp = temp.squeeze(1)
             attn[:,i,:] = temp
         
@@ -238,11 +239,13 @@ class LstmDecoder(nn.Module):
                 output, h = self.rnn(x, h)
             
             #output = [B, 1, dim]
+#             print(output.size())
             hidden_all[:,t,:] = output.squeeze(1)
-            output, _ = self.attention(output, hidden_all[:,:(t+1),:])
+            output = self.attention(output, hidden_all[:,:(t+1),:])
+#             output, _ = self.attention(output, hidden_all[:,:(t+1),:])
                 
             output = self.fc2(output)
-            #print(output.size())
+#             print(output.size())
             if stochastic:
                 output = self.softmax(output/temp).reshape(output.size(0),-1)
                 # batch_size * vocab_size

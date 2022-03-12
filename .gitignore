@@ -130,3 +130,7 @@ dmypy.json
 
 # Jetbrains setting files
 .idea/
+
+# Data folder
+data/
+experiment_data/
