@@ -21,11 +21,11 @@
   },
   "model": {
     "hidden_size": 512,
-    "embedding_size": 600,
-    "encoder_type": "ViT",
+    "embedding_size": 300,
+    "encoder_type": "Resnet",
     "decoder_attention": false,
     "decoder_depth": 2,
-    "encoder_dim": 6840
+    "encoder_dim": 2048
   },
   "generation": {
     "max_length": 20,

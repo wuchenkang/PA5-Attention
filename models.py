@@ -58,23 +58,98 @@ class VitEncoder(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self):
-        super().__init__()
+    """ Applies attention mechanism on the `context` using the `query`.
 
-    def forward(self, query, keys, values):
+    **Thank you** to IBM for their initial implementation of :class:`Attention`. Here is
+    their `License
+    <https://github.com/IBM/pytorch-seq2seq/blob/master/LICENSE>`__.
+
+    Args:
+        dimensions (int): Dimensionality of the query and context.
+        attention_type (str, optional): How to compute the attention score:
+
+            * dot: :math:`score(H_j,q) = H_j^T q`
+            * general: :math:`score(H_j, q) = H_j^T W_a q`
+
+    Example:
+
+         >>> attention = Attention(256)
+         >>> query = torch.randn(5, 1, 256)
+         >>> context = torch.randn(5, 5, 256)
+         >>> output, weights = attention(query, context)
+         >>> output.size()
+         torch.Size([5, 1, 256])
+         >>> weights.size()
+         torch.Size([5, 1, 5])
+    """
+
+    def __init__(self, dimensions, attention_type='general'):
+        super(Attention, self).__init__()
+
+        if attention_type not in ['dot', 'general']:
+            raise ValueError('Invalid attention type selected.')
+
+        self.attention_type = attention_type
+        if self.attention_type == 'general':
+            self.linear_in = nn.Linear(dimensions, dimensions, bias=False)
+
+        self.linear_out = nn.Linear(dimensions * 2, dimensions, bias=False)
+        self.softmax = nn.Softmax(dim=-1)
+        self.tanh = nn.Tanh()
+        self.relu = nn.ReLU()
+
+    def forward(self, query, context):
         """
-        [B, S, L]
+        Args:
+            query (:class:`torch.FloatTensor` [batch size, output length, dimensions]): Sequence of
+                queries to query the context.
+            context (:class:`torch.FloatTensor` [batch size, query length, dimensions]): Data
+                overwhich to apply the attention mechanism.
+
+        Returns:
+            :class:`tuple` with `output` and `weights`:
+            * **output** (:class:`torch.LongTensor` [batch size, output length, dimensions]):
+              Tensor containing the attended features.
+            * **weights** (:class:`torch.FloatTensor` [batch size, output length, query length]):
+              Tensor containing attention weights.
         """
-        query = torch.unsqueeze(1) # [B, 1, L]
-        keys = keys.transpose((1, 2)) # [B, L, S]
-        alpha = torch.bmm(query, keys) # [B, 1, S]
-        alpha = F.softmax(alpha, dim=2) # [B, 1, S]
-        result = torch.bmm(alpha, values).squeeze(1) # [B, L]
-        return result
+        batch_size, output_len, dimensions = query.size()
+        query_len = context.size(1)
+
+        if self.attention_type == "general":
+            query = query.reshape(batch_size * output_len, dimensions)
+            query = self.linear_in(query)
+            query = query.reshape(batch_size, output_len, dimensions)
+
+        # TODO: Include mask on PADDING_INDEX?
+
+        # (batch_size, output_len, dimensions) * (batch_size, query_len, dimensions) ->
+        # (batch_size, output_len, query_len)
+        attention_scores = torch.bmm(query, context.transpose(1, 2).contiguous())
+
+        # Compute weights across every context sequence
+        attention_scores = attention_scores.view(batch_size * output_len, query_len)
+        attention_weights = self.softmax(attention_scores)
+        attention_weights = attention_weights.view(batch_size, output_len, query_len)
+
+        # (batch_size, output_len, query_len) * (batch_size, query_len, dimensions) ->
+        # (batch_size, output_len, dimensions)
+        mix = torch.bmm(attention_weights, context)
+
+        # concat -> (batch_size * output_len, 2*dimensions)
+        combined = torch.cat((mix, query), dim=2)
+        combined = combined.view(batch_size * output_len, 2 * dimensions)
+
+        # Apply linear_out on every 2nd dimension of concat
+        # output -> (batch_size, output_len, dimensions)
+        output = self.linear_out(combined).view(batch_size, output_len, dimensions)
+        output = self.tanh(output)
+
+        return output, attention_weights
 
 
 class LstmDecoder(nn.Module):
-    def __init__(self, encoder_dim, embedding_dim, vocab_size, decoder_dim, decoder_depth, attention=False):
+    def __init__(self, encoder_dim, embedding_dim, vocab_size, decoder_dim, decoder_depth, attention=True):
         super().__init__()
         self.encoder_dim = encoder_dim
         self.embedding_dim = embedding_dim
@@ -83,13 +158,22 @@ class LstmDecoder(nn.Module):
         
         self.fc1 = nn.Linear(encoder_dim, embedding_dim)
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        self.lstm = nn.LSTM(embedding_dim, decoder_dim, decoder_depth, batch_first=True)
-        self.use_attention = attention
-        self.attention = Attention()
+        
+        self.lstm_flag = lstm_flag
+        if lstm_flag:
+            self.lstm = nn.LSTM(embedding_dim, decoder_dim, decoder_depth, batch_first=True)
+        else:
+            self.rnn = nn.RNN(embedding_dim, decoder_dim, decoder_depth, nonlinearity='relu', batch_first=True)
+            
         self.fc2 = nn.Linear(decoder_dim, vocab_size)
         self.softmax = nn.Softmax(dim=2)
-
         self.bn = nn.BatchNorm1d(embedding_dim, momentum=0.01)
+        
+        self.dropout = nn.Dropout(0.2)
+        
+        self.attention = Attention(decoder_dim, attention_type='dot')
+        #self.decoder_cell = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)
+        
 
     def init_hidden_states(self, batch_size, device):
         hidden_state = torch.zeros((self.decoder_depth, batch_size, self.decoder_dim)).to(device)
@@ -98,48 +182,76 @@ class LstmDecoder(nn.Module):
 
     def forward(self, x, y, lengths):
         x = self.bn( self.fc1(x) )
-        x = x.view((x.shape[0], 1, x.shape[1]))
+        
+        #x = self.dropout(x)
+        
+        feature = x.view((x.shape[0], 1, x.shape[1]))
+        
         y = self.embedding(y)
-        x = torch.cat((x, y), dim=1)
+        
+        x = torch.cat((feature, y), dim=1)
         x = pack_padded_sequence(x, lengths, batch_first = True)
         h0, c0 = self.init_hidden_states(y.shape[0], y.device)
-        output, _ = self.lstm(x, (h0.detach(), c0.detach()))
+        
+        if self.lstm_flag:
+            output, _ = self.lstm(x, (h0.detach(), c0.detach() ))
+        else:
+            output, _ = self.rnn(x, h0.detach())
+            
         output, _ = pad_packed_sequence(output, batch_first=True)
+        
+        #output is [batch, L, decoder_dim=512]
+        
+#         print(lengths)
+#         print(output.size())
         attn = torch.zeros_like(output)
-        if self.use_attention:
-            length = lengths[0]
-            for t in range(length):
-                masked_output = output.copy()
-                masked_output[t:] = 0
-                attn[:, t, :] = self.attention(output[:, t, :], masked_output, masked_output)
+#         print(attn.size())
+        
+        for i in range(len(lengths)):
+            temp, _ = self.attention(output[:,i,:].unsqueeze(1), output[:,:(i+1),:])
+            temp = temp.squeeze(1)
+            attn[:,i,:] = temp
+        
+#         print(attn.size())
+        
         predictions = self.fc2(attn)
-        # batch_size * max_len * vocab_size
+        
         return predictions
 
     def generate(self, x, max_length=100, stochastic = False, temp=0.1):
         # batch * image
-        x = self.bn(self.fc1(x))
+        x = self.bn( self.fc1(x) )
         x = x.view((x.shape[0], 1, x.shape[1]))
 
         pred = torch.zeros((x.size(0), max_length), dtype=torch.long).cuda()
         h, c = self.init_hidden_states(x.shape[0], x.device)
         h = h.detach()
         c = c.detach()
+        
+        hidden_all = torch.zeros( (x.size(0), max_length, self.decoder_dim) ).to(x.device)
+        
         for t in range(max_length):
             # print(t)
-            output, (h, c) = self.lstm(x, (h, c)) # output dimension?
+            if self.lstm_flag:
+                output, (h, c) = self.lstm(x, (h, c))
+            else:
+                output, h = self.rnn(x, h)
+            
+            #output = [B, 1, dim]
+            hidden_all[:,t,:] = output.squeeze(1)
+            output, _ = self.attention(output, hidden_all[:,:(t+1),:])
+                
             output = self.fc2(output)
             #print(output.size())
             if stochastic:
                 output = self.softmax(output/temp).reshape(output.size(0),-1)
                 # batch_size * vocab_size
-                pred[:, t] = torch.multinomial(output.data, 1).view(-1)
+                pred[:,t] = torch.multinomial(output.data, 1).view(-1)
             else:
                 #deterministic
-                pred[:, t] = torch.argmax(output, dim=2).view(-1)
+                pred[:,t] = torch.argmax(output, dim=2).view(-1)
 
             x = self.embedding(pred[:, t])
             x = x.view((x.shape[0], 1, x.shape[1]))
         
         return pred
-

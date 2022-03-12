@@ -145,6 +145,13 @@ class Experiment(object):
             self.__optimizer.zero_grad()
             loss.backward()
             self.__optimizer.step()
+            
+            if i%500 == 0:
+                # pred_caption is [B, L, 10]
+                print( self.vec_to_words(captions[0].cpu() ) )
+                pred_captions = torch.argmax( pred_captions, dim=2 )[0,:]
+                print(pred_captions.size())
+                print( self.vec_to_words(pred_captions.cpu() ) )
 
         training_loss = training_loss / len(self.__train_loader)
 
@@ -174,7 +181,6 @@ class Experiment(object):
                     print( self.vec_to_words(captions[0,:]) )
                     print( self.vec_to_words(pred_captions.argmax(dim=2)[0,:]) )
                     print( self.vec_to_words(generate_captions[0,:]) )
-                    
                 
                 
                 val_loss += loss.sum().item()
