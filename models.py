@@ -219,7 +219,7 @@ class LstmDecoder(nn.Module):
                 predictions[:, t] = torch.multinomial(output.data, 1).view(-1)
             else:
                 # deterministic
-                predictions[:, t] = torch.argmax(outputs, dim=1)
+                predictions[:, t] = torch.argmax(output, dim=1)
 
             inputs = self.embedding(predictions[:, t])
 
