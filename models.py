@@ -1,6 +1,3 @@
-#from turtle import forward
-#from black import out
-import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -16,7 +13,7 @@ class ResnetEncoder(nn.Module):
         for param in model.parameters():
             param.requires_grad = False
         self.feature_map = nn.Sequential(*list(model.children())[:-2])
-        self.adaptive_pool = nn.AdaptiveMaxPool2d((embedding_dim // 16, embedding_dim // 16))
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((embedding_dim // 16, embedding_dim // 16))
 
     def forward(self, x):
         x = self.feature_map(x)
@@ -154,12 +151,12 @@ class LstmDecoder(nn.Module):
         self.decoder_dim = decoder_dim
         self.vocab_size = vocab_size
 
-        self.fc1 = nn.Linear(encoder_dim, embedding_dim)
+        # self.fc1 = nn.Linear(encoder_dim, embedding_dim)
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
 
-        self.pool = nn.AdaptiveMaxPool2d((1, 1))
+        # self.pool = nn.AdaptiveMaxPool2d((1, 1))
         self.attn_fc = nn.Linear(encoder_dim, decoder_dim)
-        self.attention = Attention(dimensions=decoder_dim, attention_type='dot')
+        self.attention = Attention(dimensions=decoder_dim, attention_type='general')
         self.lstm1 = nn.LSTMCell(embedding_dim + decoder_dim, decoder_dim)
         self.lstm2 = nn.LSTMCell(decoder_dim, decoder_dim)
             
@@ -175,9 +172,11 @@ class LstmDecoder(nn.Module):
         return hidden_state, cell_state
 
     def forward(self, x, y, lengths):
-        x_ = x.clone().flatten(start_dim=2).permute(0, 2, 1)
-        x = self.pool(x).squeeze()
-        x = self.bn(self.fc1(x))    # [batch_size, encoder_dim]
+        x_ = x.flatten(start_dim=2).permute(0, 2, 1)
+        # x = self.pool(x).squeeze()
+        # x = self.bn(self.fc1(x))    # [batch_size, encoder_dim]
+        x = torch.zeros((x.size(0), self.embedding_dim)).to(x.device)
+        x[:, 0] = 1
         y = self.embedding(y)       # [batch_size, seqence_len, embedding_dim]
 
         inputs = torch.cat((x.view((x.shape[0], 1, x.shape[1])), y), dim=1)
@@ -196,9 +195,11 @@ class LstmDecoder(nn.Module):
         return outputs
 
     def generate(self, x, max_length=100, stochastic=False, temp=0.1):
-        x_ = x.clone().flatten(start_dim=2).permute(0, 2, 1)
-        x = self.pool(x).squeeze()
-        x = self.bn(self.fc1(x))  # [batch_size, encoder_dim]
+        x_ = x.flatten(start_dim=2).permute(0, 2, 1)
+        # x = self.pool(x).squeeze()
+        # x = self.bn(self.fc1(x))  # [batch_size, encoder_dim]
+        x = torch.zeros((x.size(0), self.embedding_dim)).to(x.device)
+        x[:, 0] = 1
 
         h_0, c_0 = self.init_hidden_states(x.shape[0], x.device)
         h_1, c_1 = self.init_hidden_states(x.shape[0], x.device)
