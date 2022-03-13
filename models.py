@@ -9,7 +9,7 @@ from transformers import ViTFeatureExtractor, ViTModel
 class ResnetEncoder(nn.Module):
     def __init__(self, embedding_dim):
         super().__init__()
-        model = resnet50(pretrained = True)
+        model = resnet50(pretrained=True)
         for param in model.parameters():
             param.requires_grad = False
         self.feature_map = nn.Sequential(*list(model.children())[:-2])
@@ -159,11 +159,11 @@ class LstmDecoder(nn.Module):
         self.attention = Attention(dimensions=decoder_dim, attention_type='general')
         self.lstm1 = nn.LSTMCell(embedding_dim + decoder_dim, decoder_dim)
         self.lstm2 = nn.LSTMCell(decoder_dim, decoder_dim)
-            
+
         self.fc2 = nn.Linear(decoder_dim, vocab_size)
         self.softmax = nn.Softmax(dim=2)
         self.bn = nn.BatchNorm1d(embedding_dim, momentum=0.01)
-        
+
         self.dropout = nn.Dropout(0.2)
 
     def init_hidden_states(self, batch_size, device):
@@ -172,12 +172,12 @@ class LstmDecoder(nn.Module):
         return hidden_state, cell_state
 
     def forward(self, x, y, lengths):
-        x_ = x.flatten(start_dim=2).permute(0, 2, 1)
+        x_ = x.clone().flatten(start_dim=2).permute(0, 2, 1)
         # x = self.pool(x).squeeze()
         # x = self.bn(self.fc1(x))    # [batch_size, encoder_dim]
         x = torch.zeros((x.size(0), self.embedding_dim)).to(x.device)
         x[:, 0] = 1
-        y = self.embedding(y)       # [batch_size, seqence_len, embedding_dim]
+        y = self.embedding(y)  # [batch_size, seqence_len, embedding_dim]
 
         inputs = torch.cat((x.view((x.shape[0], 1, x.shape[1])), y), dim=1)
         h_0, c_0 = self.init_hidden_states(y.shape[0], y.device)
@@ -190,25 +190,24 @@ class LstmDecoder(nn.Module):
             h_0, c_0 = self.lstm1(torch.cat((inputs[:, t], attn), dim=1), (h_0, c_0))
             h_1, c_1 = self.lstm2(h_0, (h_1, c_1))
             outputs[:, t] = h_1
-            
+
         outputs = self.fc2(outputs)
         return outputs
 
     def generate(self, x, max_length=100, stochastic=False, temp=0.1):
-        x_ = x.flatten(start_dim=2).permute(0, 2, 1)
+        x = x.flatten(start_dim=2).permute(0, 2, 1)
         # x = self.pool(x).squeeze()
         # x = self.bn(self.fc1(x))  # [batch_size, encoder_dim]
-        x = torch.zeros((x.size(0), self.embedding_dim)).to(x.device)
-        x[:, 0] = 1
 
         h_0, c_0 = self.init_hidden_states(x.shape[0], x.device)
         h_1, c_1 = self.init_hidden_states(x.shape[0], x.device)
-        
+
         predictions = torch.zeros((x.size(0), max_length), dtype=torch.long, device=x.device)
 
-        inputs = torch.zeros((x.size(0), self.embedding_dim), device=x.device)
+        inputs = torch.zeros((x.size(0), self.embedding_dim)).to(x.device)
+        inputs[:, 0] = 1
         for t in range(max_length):
-            attn, _ = self.attention(h_0.unsqueeze(1), self.attn_fc(x_))
+            attn, _ = self.attention(h_0.unsqueeze(1), self.attn_fc(x))
             attn = attn.squeeze(1)
 
             h_0, c_0 = self.lstm1(torch.cat((inputs, attn), dim=1), (h_0, c_0))
