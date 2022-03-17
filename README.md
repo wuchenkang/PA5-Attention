@@ -1,2 +1,2 @@
-# PA5-Transformer
-CSE 251B PA5
+# PA5-Attention
+CSE 251B final project to explore the effects of attention mechanism on traditional encoder-decoder structure for image captioning task.
